@@ -1,0 +1,791 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
+import {
+    FolderKanban,
+    Plus,
+    Search,
+    MoreVertical,
+    Calendar,
+    Users,
+    TrendingUp,
+    Building2,
+    MapPin,
+    Clock,
+    CheckCircle2,
+    AlertCircle,
+    X,
+    Edit2,
+    Trash2,
+    Loader2,
+    AlertTriangle,
+    GanttChartSquare,
+    ShoppingBag,
+    ListTodo
+} from 'lucide-react';
+import { Project } from '@/types/construction';
+import { getProjects, createProject, updateProject, deleteProject } from '@/lib/firestore';
+import { useAuth } from '@/contexts/AuthContext';
+import { format, parseISO, differenceInDays } from 'date-fns';
+
+type StatusType = 'all' | 'active' | 'planning' | 'in-progress' | 'completed' | 'on-hold';
+
+export default function ProjectsPage() {
+    const { user } = useAuth();
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [searchQuery, setSearchQuery] = useState('');
+    // Default to 'active'
+    const [statusFilter, setStatusFilter] = useState<StatusType>('active');
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+    // Modal states
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingProject, setEditingProject] = useState<Project | null>(null);
+    const [saving, setSaving] = useState(false);
+    const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null); // Used for dropdown menu
+    const [projectToDelete, setProjectToDelete] = useState<Project | null>(null); // Used for delete confirmation modal
+
+    // Form state
+    const [formData, setFormData] = useState({
+        name: '',
+        code: '',
+        owner: '',
+        location: '',
+        description: '',
+        startDate: '',
+        endDate: '',
+        manager: '',
+        budget: 0,
+        status: 'planning' as Project['status']
+    });
+
+    // Helper: Format date
+    const formatDate = (dateStr: string) => {
+        if (!dateStr) return '-';
+        try {
+            return format(parseISO(dateStr), 'dd/MM/yyyy');
+        } catch {
+            return dateStr;
+        }
+    };
+
+    // Fetch projects
+    useEffect(() => {
+        fetchProjects();
+    }, []);
+
+    const fetchProjects = async () => {
+        try {
+            setLoading(true);
+            const data = await getProjects();
+            setProjects(data);
+        } catch (error) {
+            console.error('Error fetching projects:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Filter projects
+    const filteredProjects = projects.filter(project => {
+        const matchesSearch = project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (project.code || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (project.description || '').toLowerCase().includes(searchQuery.toLowerCase());
+
+        let matchesStatus = true;
+        if (statusFilter === 'all') {
+            matchesStatus = true;
+        } else if (statusFilter === 'active') {
+            matchesStatus = ['planning', 'in-progress'].includes(project.status);
+        } else {
+            matchesStatus = project.status === statusFilter;
+        }
+
+        return matchesSearch && matchesStatus;
+    });
+
+    // Stats
+    const stats = {
+        total: projects.length,
+        inProgress: projects.filter(p => p.status === 'in-progress').length,
+        completed: projects.filter(p => p.status === 'completed').length,
+        planning: projects.filter(p => p.status === 'planning').length,
+    };
+
+    // Open modal for create
+    const openCreateModal = () => {
+        setEditingProject(null);
+        setFormData({
+            name: '',
+            code: '',
+            owner: '',
+            location: '',
+            description: '',
+            startDate: new Date().toISOString().slice(0, 10),
+            endDate: '',
+            manager: '',
+            budget: 0,
+            status: 'planning'
+        });
+        setIsModalOpen(true);
+    };
+
+    // Open modal for edit
+    const openEditModal = (project: Project) => {
+        setEditingProject(project);
+        setFormData({
+            name: project.name,
+            code: project.code || '',
+            owner: project.owner,
+            location: (project as any).location || '',
+            description: project.description || '',
+            startDate: project.startDate,
+            endDate: project.endDate,
+            manager: (project as any).manager || '',
+            budget: (project as any).budget || 0,
+            status: project.status
+        });
+        setIsModalOpen(true);
+    };
+
+    // Handle form submit
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setSaving(true);
+
+        try {
+            if (editingProject) {
+                // Update existing project
+                await updateProject(editingProject.id, {
+                    name: formData.name,
+                    code: formData.code.trim(),
+                    owner: formData.owner,
+                    description: formData.description,
+                    startDate: formData.startDate,
+                    endDate: formData.endDate,
+                    status: formData.status,
+                });
+            } else {
+                // Create new project
+                await createProject({
+                    name: formData.name,
+                    code: formData.code.trim(),
+                    owner: formData.owner,
+                    description: formData.description,
+                    startDate: formData.startDate,
+                    endDate: formData.endDate,
+                    overallProgress: 0,
+                    status: formData.status,
+                });
+            }
+
+            setIsModalOpen(false);
+            fetchProjects();
+        } catch (error) {
+            console.error('Error saving project:', error);
+            alert('เกิดข้อผิดพลาดในการบันทึก');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // Handle delete
+    // Handle delete click
+    const handleDeleteClick = (project: Project) => {
+        setProjectToDelete(project);
+        setDeleteConfirm(null);
+    };
+
+    // Confirm delete
+    const confirmDelete = async () => {
+        if (!projectToDelete) return;
+
+        try {
+            setSaving(true);
+            await deleteProject(projectToDelete.id);
+            setProjectToDelete(null);
+            fetchProjects();
+        } catch (error) {
+            console.error('Error deleting project:', error);
+            alert('เกิดข้อผิดพลาดในการลบ');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // Status config
+    const getStatusConfig = (status: string) => {
+        const configs: Record<string, { label: string; class: string; icon: React.ReactNode }> = {
+            'planning': { label: 'วางแผน', class: 'bg-slate-100 text-slate-800 border-slate-300', icon: <Clock className="w-3 h-3" /> },
+            'in-progress': { label: 'กำลังดำเนินการ', class: 'bg-blue-100 text-blue-800 border-blue-300', icon: <TrendingUp className="w-3 h-3" /> },
+            'completed': { label: 'เสร็จสิ้น', class: 'bg-green-100 text-green-800 border-green-300', icon: <CheckCircle2 className="w-3 h-3" /> },
+            'on-hold': { label: 'ระงับชั่วคราว', class: 'bg-amber-100 text-amber-800 border-amber-300', icon: <AlertCircle className="w-3 h-3" /> },
+        };
+        return configs[status] || configs['planning'];
+    };
+
+    return (
+        <div className="space-y-6 subpixel-antialiased [text-rendering:geometricPrecision]">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+                        <FolderKanban className="w-6 h-6 text-blue-600" />
+                        โครงการทั้งหมด
+                    </h1>
+                    <p className="text-slate-700 text-sm mt-0.5">จัดการและติดตามโครงการก่อสร้าง</p>
+                </div>
+
+                {['admin', 'project_manager'].includes(user?.role || '') && (
+                    <button
+                        onClick={openCreateModal}
+                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors flex items-center gap-2"
+                    >
+                        <Plus className="w-4 h-4" />
+                        สร้างโครงการใหม่
+                    </button>
+                )}
+            </div>
+
+            {/* Quick Stats */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-white rounded-md border border-slate-300 p-4 shadow-sm">
+                    <p className="text-slate-700 text-xs font-semibold">โครงการทั้งหมด</p>
+                    <p className="text-2xl font-bold text-slate-900 mt-1">{stats.total}</p>
+                </div>
+                <div className="bg-white rounded-md border border-slate-300 p-4 shadow-sm">
+                    <p className="text-slate-700 text-xs font-semibold">กำลังดำเนินการ</p>
+                    <p className="text-2xl font-bold text-blue-700 mt-1">{stats.inProgress}</p>
+                </div>
+                <div className="bg-white rounded-md border border-slate-300 p-4 shadow-sm">
+                    <p className="text-slate-700 text-xs font-semibold">เสร็จสิ้น</p>
+                    <p className="text-2xl font-bold text-green-700 mt-1">{stats.completed}</p>
+                </div>
+                <div className="bg-white rounded-md border border-slate-300 p-4 shadow-sm">
+                    <p className="text-slate-700 text-xs font-semibold">วางแผน</p>
+                    <p className="text-2xl font-bold text-slate-700 mt-1">{stats.planning}</p>
+                </div>
+            </div>
+
+            {/* Filters */}
+            <div className="bg-white rounded-md border border-slate-300 p-4 flex flex-col lg:flex-row gap-3 shadow-sm">
+                <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                    <input
+                        type="text"
+                        placeholder="ค้นหาโครงการ..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-9 pr-4 py-2 bg-white border border-slate-300 rounded-md text-sm text-slate-900 placeholder:text-slate-500 font-medium focus:border-slate-900 transition-colors"
+                    />
+                </div>
+
+                <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as StatusType)}
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-md text-sm focus:border-slate-900 transition-colors font-semibold text-slate-800"
+                >
+                    <option value="active">⚡ ดำเนินการอยู่ (Active)</option>
+                    <option value="all">ทั้งหมด (All)</option>
+                    <option disabled>──────────</option>
+                    <option value="planning">วางแผน</option>
+                    <option value="in-progress">กำลังดำเนินการ</option>
+                    <option value="on-hold">ระงับชั่วคราว</option>
+                    <option value="completed">เสร็จสิ้น</option>
+                </select>
+
+                <div className="flex items-center bg-white border border-slate-300 rounded-md overflow-hidden">
+                    <button
+                        onClick={() => setViewMode('grid')}
+                        className={`px-3 py-2 text-sm ${viewMode === 'grid' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'}`}
+                    >
+                        Grid
+                    </button>
+                    <button
+                        onClick={() => setViewMode('list')}
+                        className={`px-3 py-2 text-sm border-l border-slate-300 ${viewMode === 'list' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'}`}
+                    >
+                        List
+                    </button>
+                </div>
+            </div>
+
+            {/* Loading State */}
+            {
+                loading ? (
+                    <div className="flex items-center justify-center py-12">
+                        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+                        <span className="ml-2 text-gray-600">กำลังโหลดข้อมูล...</span>
+                    </div>
+                ) : filteredProjects.length === 0 ? (
+                    /* Empty State */
+                    <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+                        <FolderKanban className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                        <p className="text-gray-600 mb-4">
+                            {projects.length === 0 ? 'ยังไม่มีโครงการ' : 'ไม่พบโครงการที่ค้นหา'}
+                        </p>
+                        {projects.length === 0 && ['admin', 'project_manager'].includes(user?.role || '') && (
+                            <button
+                                onClick={openCreateModal}
+                                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                            >
+                                สร้างโครงการแรก
+                            </button>
+                        )}
+                    </div>
+                ) : viewMode === 'grid' ? (
+                    /* Projects Grid */
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                        {filteredProjects.map((project) => {
+                            const statusConfig = getStatusConfig(project.status);
+
+                            // Calculate days remaining/duration for display
+                            const duration = Math.max(0, differenceInDays(parseISO(project.endDate), parseISO(project.startDate)) + 1);
+
+                            return (
+                                <div
+                                    key={project.id}
+                                    className="group relative bg-white rounded-lg border border-slate-300 shadow-sm hover:shadow-md transition-all duration-300 flex flex-col overflow-hidden"
+                                >
+                                    {/* Status Stripe (Left) */}
+                                    <div className={`absolute left-0 top-0 bottom-0 w-1 transition-colors ${project.status === 'completed' ? 'bg-green-500' :
+                                        project.status === 'in-progress' ? 'bg-blue-600' :
+                                            project.status === 'on-hold' ? 'bg-amber-500' : 'bg-gray-300'
+                                        }`} />
+
+                                    <div className="p-5 flex flex-col h-full pl-6">
+                                        {/* Header */}
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div className="flex-1 min-w-0 pr-4">
+                                                <Link href={`/projects/${project.id}`} className="block">
+                                                    <h3 className="text-base font-bold text-slate-900 leading-tight truncate group-hover:text-blue-700 transition-colors" title={project.name}>
+                                                        {project.name}
+                                                    </h3>
+                                                </Link>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <Building2 className="w-3 h-3 text-slate-500" />
+                                                    <span className="text-xs font-semibold text-slate-700 uppercase tracking-wide truncate">{project.owner}</span>
+                                                </div>
+                                                {project.code && (
+                                                    <p className="text-[11px] text-slate-600 mt-1 font-medium truncate">
+                                                        เลขที่โครงการ: {project.code}
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            {/* Menu & Status */}
+                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold border ${statusConfig.class}`}>
+                                                    {statusConfig.label}
+                                                </span>
+
+                                                <div className="relative">
+                                                    {['admin', 'project_manager'].includes(user?.role || '') && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                setDeleteConfirm(deleteConfirm === project.id ? null : project.id);
+                                                            }}
+                                                            className="p-1 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
+                                                        >
+                                                            <MoreVertical className="w-4 h-4" />
+                                                        </button>
+                                                    )}
+
+                                                    {/* Dropdown Menu */}
+                                                    {deleteConfirm === project.id && (
+                                                        <div className="absolute right-0 top-6 bg-white border border-slate-300 rounded shadow-lg py-1 z-20 w-32">
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.preventDefault();
+                                                                    openEditModal(project);
+                                                                    setDeleteConfirm(null);
+                                                                }}
+                                                                className="w-full px-3 py-2 text-left text-xs text-slate-800 hover:bg-slate-50 flex items-center gap-2"
+                                                            >
+                                                                <Edit2 className="w-3 h-3" />
+                                                                แก้ไข
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.preventDefault();
+                                                                    handleDeleteClick(project);
+                                                                }}
+                                                                className="w-full px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                                            >
+                                                                <Trash2 className="w-3 h-3" />
+                                                                ลบ
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Description (Optional - can be removed for more compactness, keeping for info) */}
+                                        {project.description && (
+                                            <p className="text-xs text-slate-600 line-clamp-2 mb-4 h-8">
+                                                {project.description}
+                                            </p>
+                                        )}
+
+                                        {/* Metrics Row */}
+                                        <div className="grid grid-cols-2 gap-4 mb-4 mt-auto">
+                                            {/* Date Info */}
+                                            <div>
+                                                <p className="text-xs text-slate-600 font-semibold uppercase mb-1">Timeline</p>
+                                                <div className="flex items-center gap-1.5 text-xs text-slate-800 font-semibold">
+                                                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                                                    <span>{duration} Days</span>
+                                                </div>
+                                                <p className="text-xs text-slate-600 mt-0.5 truncate">
+                                                    {formatDate(project.startDate)} - {formatDate(project.endDate)}
+                                                </p>
+                                            </div>
+
+                                            {/* Progress Info */}
+                                            <div className="flex flex-col justify-end">
+                                                <div className="flex justify-between items-end mb-1">
+                                                    <span className="text-xs text-slate-600 font-semibold uppercase">Progress</span>
+                                                    <span className={`text-xs font-bold ${project.overallProgress >= 100 ? 'text-green-700' : 'text-slate-900'}`}>{project.overallProgress}%</span>
+                                                </div>
+                                                <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                                                    <div
+                                                        className={`h-full rounded-full transition-all duration-1000 ${project.overallProgress >= 100 ? 'bg-green-500' :
+                                                            project.overallProgress >= 50 ? 'bg-blue-600' : 'bg-gray-700'
+                                                            }`}
+                                                        style={{ width: `${project.overallProgress}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Divider */}
+                                        <div className="h-px bg-slate-200 mb-3" />
+
+                                        {/* Action Grid - Clean Business Style */}
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {/* Gantt */}
+                                            <Link
+                                                href={`/gantt?projectId=${project.id}`}
+                                                className="flex flex-col items-center justify-center py-2 px-1 rounded bg-teal-50 hover:bg-teal-100 text-teal-700 transition-colors"
+                                                title="Gantt Chart"
+                                            >
+                                                <GanttChartSquare className="w-4 h-4 mb-1.5" />
+                                                <span className="text-xs font-semibold">Gantt</span>
+                                            </Link>
+
+                                            {/* Procurement */}
+                                            <Link
+                                                href={`/procurement/${project.id}`}
+                                                className="flex flex-col items-center justify-center py-2 px-1 rounded bg-orange-50 hover:bg-orange-100 text-orange-700 transition-colors"
+                                                title="Procurement Plan"
+                                            >
+                                                <ShoppingBag className="w-4 h-4 mb-1.5" />
+                                                <span className="text-xs font-semibold">Procure</span>
+                                            </Link>
+                                            {/* Tasks (Main Project Page) */}
+                                            <Link
+                                                href={`/projects/${project.id}`}
+                                                className="flex flex-col items-center justify-center py-2 px-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors"
+                                                title="Project Tasks"
+                                            >
+                                                <ListTodo className="w-4 h-4 mb-1.5" />
+                                                <span className="text-xs font-semibold">Tasks</span>
+                                            </Link>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    /* Projects List View */
+                    <div className="bg-white rounded-md border border-slate-300 overflow-hidden shadow-sm">
+                        <table className="w-full">
+                            <thead className="bg-slate-100 border-b border-slate-300">
+                                <tr>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">โครงการ</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">เลขที่โครงการ</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">เจ้าของ</th>
+                                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-700 uppercase">Progress</th>
+                                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-700 uppercase">สถานะ</th>
+                                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-700 uppercase">เครื่องมือ</th>
+                                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-700 uppercase">จัดการ</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                                {filteredProjects.map((project) => {
+                                    const statusConfig = getStatusConfig(project.status);
+                                    const isCompleted = project.status === 'completed';
+                                    const isOnHold = project.status === 'on-hold';
+
+                                    return (
+                                        <tr
+                                            key={project.id}
+                                            className={`
+                                                transition-colors
+                                                ${isCompleted ? 'bg-green-50/10 hover:bg-green-50/30' :
+                                                    isOnHold ? 'bg-amber-50/10 hover:bg-amber-50/30 opacity-90' :
+                                                        'hover:bg-slate-50'}
+                                            `}
+                                        >
+                                            <td className="px-4 py-3">
+                                                <Link href={`/projects/${project.id}`} className="block group">
+                                                    <p className={`text-sm font-semibold transition-colors ${isCompleted ? 'text-green-900' : 'text-slate-900 group-hover:text-blue-700'}`}>
+                                                        {project.name}
+                                                    </p>
+                                                    <p className="text-xs text-slate-600">
+                                                        {formatDate(project.startDate)} → {formatDate(project.endDate)}
+                                                        <span className="ml-2">({Math.max(0, differenceInDays(parseISO(project.endDate), parseISO(project.startDate)) + 1)} วัน)</span>
+                                                    </p>
+                                                </Link>
+                                            </td>
+                                            <td className="px-4 py-3 text-sm text-slate-800 font-semibold">
+                                                {project.code || '-'}
+                                            </td>
+                                            <td className="px-4 py-3 text-sm text-slate-800">{project.owner}</td>
+                                            <td className="px-4 py-3">
+                                                <div className="flex items-center gap-2 justify-center">
+                                                    <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                        <div
+                                                            className={`h-full rounded-full ${project.overallProgress === 100 ? 'bg-green-500' :
+                                                                project.overallProgress >= 50 ? 'bg-blue-500' :
+                                                                    'bg-amber-500'
+                                                                }`}
+                                                            style={{ width: `${project.overallProgress}%` }}
+                                                        />
+                                                    </div>
+                                                    <span className="text-sm font-semibold text-slate-800">{project.overallProgress}%</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 text-center">
+                                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border inline-flex items-center gap-1 ${statusConfig.class}`}>
+                                                    {statusConfig.icon}
+                                                    {statusConfig.label}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3 text-center">
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <Link
+                                                        href={`/gantt?projectId=${project.id}`}
+                                                        className="px-3 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-md hover:bg-teal-100 transition-colors flex items-center gap-1.5"
+                                                        title="Gantt Chart"
+                                                    >
+                                                        <GanttChartSquare className="w-3.5 h-3.5" />
+                                                        Gantt
+                                                    </Link>
+                                                    <Link
+                                                        href={`/procurement/${project.id}`}
+                                                        className="px-3 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-md hover:bg-orange-100 transition-colors flex items-center gap-1.5"
+                                                        title="Procurement"
+                                                    >
+                                                        <ShoppingBag className="w-3.5 h-3.5" />
+                                                        Procurement
+                                                    </Link>
+                                                    <Link
+                                                        href={`/projects/${project.id}`}
+                                                        className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors flex items-center gap-1.5"
+                                                        title="Tasks"
+                                                    >
+                                                        <ListTodo className="w-3.5 h-3.5" />
+                                                        Tasks
+                                                    </Link>
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <div className="flex items-center justify-center gap-1">
+                                                    {['admin', 'project_manager'].includes(user?.role || '') && (
+                                                        <>
+                                                            <button
+                                                                onClick={() => openEditModal(project)}
+                                                                className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-blue-700 transition-colors"
+                                                                title="แก้ไข"
+                                                            >
+                                                                <Edit2 className="w-4 h-4" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDeleteClick(project)}
+                                                                className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-red-700 transition-colors"
+                                                                title="ลบ"
+                                                            >
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )
+            }
+
+            {/* Create/Edit Modal */}
+            {
+                isModalOpen && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-md w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-none border border-gray-500">
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                                <h2 className="text-lg font-semibold text-gray-900">
+                                    {editingProject ? 'แก้ไขโครงการ' : 'สร้างโครงการใหม่'}
+                                </h2>
+                                <button
+                                    onClick={() => setIsModalOpen(false)}
+                                    className="p-1 hover:bg-gray-100 rounded text-gray-400"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1.5">ชื่อโครงการ *</label>
+                                    <input
+                                        type="text"
+                                        required
+                                        value={formData.name}
+                                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                        placeholder="เช่น Entrance 1 Construction"
+                                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:border-black transition-colors"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1.5">เลขที่โครงการ</label>
+                                    <input
+                                        type="text"
+                                        value={formData.code}
+                                        onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                                        placeholder="เช่น PJ-2026-001"
+                                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:border-black transition-colors"
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1.5">เจ้าของโครงการ *</label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={formData.owner}
+                                            onChange={(e) => setFormData({ ...formData, owner: e.target.value })}
+                                            placeholder="เช่น SCCC"
+                                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:border-black transition-colors"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1.5">สถานะ</label>
+                                        <select
+                                            value={formData.status}
+                                            onChange={(e) => setFormData({ ...formData, status: e.target.value as Project['status'] })}
+                                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:border-black transition-colors"
+                                        >
+                                            <option value="planning">วางแผน</option>
+                                            <option value="in-progress">กำลังดำเนินการ</option>
+                                            <option value="completed">เสร็จสิ้น</option>
+                                            <option value="on-hold">ระงับชั่วคราว</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1.5">รายละเอียด</label>
+                                    <textarea
+                                        rows={3}
+                                        value={formData.description}
+                                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                        placeholder="รายละเอียดโครงการ..."
+                                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:border-black transition-colors resize-none"
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1.5">วันเริ่มต้น *</label>
+                                        <input
+                                            type="date"
+                                            required
+                                            value={formData.startDate}
+                                            onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:border-black transition-colors"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1.5">วันสิ้นสุด *</label>
+                                        <input
+                                            type="date"
+                                            required
+                                            value={formData.endDate}
+                                            onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:border-black transition-colors"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsModalOpen(false)}
+                                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                                    >
+                                        ยกเลิก
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={saving}
+                                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                                    >
+                                        {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                                        {editingProject ? 'บันทึก' : 'สร้างโครงการ'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Delete Confirmation Modal */}
+            {projectToDelete && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-md w-full max-w-md p-6 border border-gray-400 shadow-none">
+                        <div className="flex flex-col items-center text-center">
+                            <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4">
+                                <AlertTriangle className="w-6 h-6" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-900 mb-2">ยืนยันการลบโครงการ?</h3>
+                            <p className="text-gray-500 text-sm mb-6">
+                                คุณต้องการลบโครงการ <span className="font-medium text-gray-900">"{projectToDelete.name}"</span> ใช่หรือไม่?
+                                <br />
+                                <span className="text-red-600 font-medium mt-1 block">การดำเนินการนี้จะลบงานทั้งหมด (Tasks) ที่เกี่ยวข้องไปด้วย และไม่สามารถกู้คืนได้</span>
+                            </p>
+
+                            <div className="flex items-center gap-3 w-full">
+                                <button
+                                    onClick={() => setProjectToDelete(null)}
+                                    className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                                >
+                                    ยกเลิก
+                                </button>
+                                <button
+                                    onClick={confirmDelete}
+                                    disabled={saving}
+                                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                                >
+                                    {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                                    ลบโครงการ
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div >
+    );
+}
